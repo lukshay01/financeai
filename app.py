@@ -168,7 +168,7 @@ def extract_profile_info(message, profile):
         profile["Financial Goals"] = ", ".join(goals)
     return profile
 
-def get_groq_response(question, model="llama-3.1-8b-instant"):
+def get_groq_response(question, model="llama-3.3-70b-versatile"):
     client = get_groq_client()
     simple_prompt = f"You are a financial advisor. Answer this question with specific advice and numbers: {question}"
     response = client.chat.completions.create(
@@ -411,16 +411,16 @@ elif st.session_state.mode == "compare":
             st.divider()
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("### 🟢 Mixtral 8x7B")
-                st.caption("Mixtral — powerful mixture of experts model")
-                with st.spinner("Mixtral thinking..."):
-                    r1 = get_groq_response(compare_question, model="llama-3.1-8b-instant")
+                st.markdown("### 🟢 LLaMA 3.3 70B")
+                st.caption("LLaMA 3.3 70B — Meta's most powerful open source model")
+                with st.spinner("LLaMA 3.3 70B thinking..."):
+                    r1 = get_groq_response(compare_question, model="llama-3.3-70b-versatile")
                 st.markdown(f"<div class='comparison-left'>{r1}</div>", unsafe_allow_html=True)
             with col2:
-                st.markdown("### 🟠 LLaMA 3 8B")
-                st.caption("LLaMA 3 — Meta's latest open source model")
-                with st.spinner("LLaMA thinking..."):
-                    r2 = get_groq_response(compare_question, model="llama3-8b-8192")
+                st.markdown("### 🟠 LLaMA 3.1 8B")
+                st.caption("LLaMA 3.1 8B — lighter, faster model for comparison")
+                with st.spinner("LLaMA 3.1 8B thinking..."):
+                    r2 = get_groq_response(compare_question, model="llama-3.1-8b-instant")
                 st.markdown(f"<div class='comparison-right'>{r2}</div>", unsafe_allow_html=True)
             st.divider()
             st.markdown("### 📊 What to Notice")
@@ -525,7 +525,7 @@ else:
                 reply_placeholder = st.empty()
                 full_reply = ""
                 stream = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                    model="llama-3.3-70b-versatile",
                     messages=groq_messages,
                     max_tokens=1024,
                     temperature=0.5,
