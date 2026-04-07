@@ -1,0 +1,8 @@
+streamlit
+ollama
+plotly
+yfinance
+reportlab
+groq
+datasets
+pandas
