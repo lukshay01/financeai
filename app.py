@@ -1,8 +1,8 @@
 import streamlit as st
-import ollama
 import re
+import os
 import plotly.graph_objects as go
-import plotly.express as px
+from groq import Groq
 from pdf_export import generate_pdf
 from stocks_news import render_stocks_page
 
@@ -11,17 +11,9 @@ st.set_page_config(page_title="FinanceAI", page_icon="💰", layout="wide")
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
-    }
-    .main {
-        background-color: #0f1117;
-        color: #ffffff;
-    }
-    .stApp {
-        background-color: #0f1117;
-    }
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    .main { background-color: #0f1117; color: #ffffff; }
+    .stApp { background-color: #0f1117; }
     .metric-card {
         background: linear-gradient(135deg, #1e2130, #252840);
         border: 1px solid #2d3150;
@@ -30,16 +22,8 @@ st.markdown("""
         text-align: center;
         margin: 5px 0;
     }
-    .metric-value {
-        font-size: 2em;
-        font-weight: 700;
-        color: #4ade80;
-    }
-    .metric-label {
-        font-size: 0.85em;
-        color: #94a3b8;
-        margin-top: 4px;
-    }
+    .metric-value { font-size: 2em; font-weight: 700; color: #4ade80; }
+    .metric-label { font-size: 0.85em; color: #94a3b8; margin-top: 4px; }
     .profile-box {
         background: linear-gradient(135deg, #1e2130, #252840);
         border: 1px solid #2d3150;
@@ -73,12 +57,20 @@ st.markdown("""
         padding: 4px;
         margin: 4px 0;
     }
-    .stButton button {
-        border-radius: 10px;
-        font-weight: 600;
-    }
+    .stButton button { border-radius: 10px; font-weight: 600; }
     </style>
 """, unsafe_allow_html=True)
+
+# ============================================================
+# GROQ CLIENT
+# ============================================================
+@st.cache_resource
+def get_groq_client():
+    api_key = st.secrets.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        st.error("Groq API key not found. Please add GROQ_API_KEY to your Streamlit secrets.")
+        st.stop()
+    return Groq(api_key=api_key)
 
 SYSTEM_PROMPT = """You are FinanceAI, an expert personal financial advisor with 20 years of experience.
 
@@ -113,26 +105,30 @@ Then present a complete financial plan with these sections:
 ## Long Term Outlook (where they could be in 5 and 10 years)
 
 Always use their actual numbers. Be specific, warm and encouraging.
-Never give vague advice. Every recommendation must include specific numbers and timelines."""
+Never give vague advice. Every recommendation must include specific numbers and timelines.
+Always complete your full response. Never leave answers incomplete.
+Double check all spelling before responding."""
 
+# ============================================================
+# SESSION STATE
+# ============================================================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "started" not in st.session_state:
     st.session_state.started = False
 if "user_profile" not in st.session_state:
     st.session_state.user_profile = {
-        "Name": None,
-        "Age": None,
-        "Monthly Income": None,
-        "Monthly Expenses": None,
-        "Financial Goals": None,
-        "Risk Tolerance": None
+        "Name": None, "Age": None, "Monthly Income": None,
+        "Monthly Expenses": None, "Financial Goals": None, "Risk Tolerance": None
     }
 if "mode" not in st.session_state:
     st.session_state.mode = "chat"
 if "show_charts" not in st.session_state:
     st.session_state.show_charts = False
 
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
 def extract_numbers(text):
     numbers = re.findall(r'\$?(\d+(?:,\d{3})*(?:\.\d{2})?)', text)
     return [float(n.replace(",", "")) for n in numbers]
@@ -172,13 +168,16 @@ def extract_profile_info(message, profile):
         profile["Financial Goals"] = ", ".join(goals)
     return profile
 
-def get_model_response(model_name, question):
+def get_groq_response(question, model="mixtral-8x7b-32768"):
+    client = get_groq_client()
     simple_prompt = f"You are a financial advisor. Answer this question with specific advice and numbers: {question}"
-    response = ollama.chat(
-        model=model_name,
-        messages=[{"role": "user", "content": simple_prompt}]
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": simple_prompt}],
+        max_tokens=1024,
+        temperature=0.5,
     )
-    return response["message"]["content"]
+    return response.choices[0].message.content
 
 def parse_amount(amount_str):
     if amount_str:
@@ -188,18 +187,13 @@ def parse_amount(amount_str):
     return None
 
 def create_budget_chart(income, expenses):
-    savings = income - expenses
-    if savings < 0:
-        savings = 0
-        expenses = income
-    labels = ["Expenses", "Savings"]
-    values = [expenses, savings]
-    colors = ["#f87171", "#4ade80"]
+    savings = max(income - expenses, 0)
+    expenses_display = min(expenses, income)
     fig = go.Figure(data=[go.Pie(
-        labels=labels,
-        values=values,
+        labels=["Expenses", "Savings"],
+        values=[expenses_display, savings],
         hole=0.6,
-        marker=dict(colors=colors, line=dict(color="#0f1117", width=3)),
+        marker=dict(colors=["#f87171", "#4ade80"], line=dict(color="#0f1117", width=3)),
         textinfo="label+percent",
         textfont=dict(size=14, color="white"),
     )])
@@ -237,40 +231,19 @@ def create_projection_chart(monthly_savings, years=10):
             else:
                 total = total * (1 + monthly_rate) + monthly_savings
                 values.append(total)
-        year_labels = [m / 12 for m in months]
         fig.add_trace(go.Scatter(
-            x=year_labels,
+            x=[m / 12 for m in months],
             y=values,
             name=label,
             line=dict(color=color, width=2.5),
-            fill="tozeroy",
-            fillcolor=color.replace(")", ", 0.05)").replace("rgb", "rgba") if "rgb" in color else color + "0D",
         ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="white", family="Inter"),
-        xaxis=dict(
-            title="Years",
-            gridcolor="#2d3150",
-            tickvals=list(range(0, years + 1)),
-            color="white"
-        ),
-        yaxis=dict(
-            title="Total Savings ($)",
-            gridcolor="#2d3150",
-            tickformat="$,.0f",
-            color="white"
-        ),
-        legend=dict(
-            bgcolor="rgba(0,0,0,0)",
-            font=dict(color="white"),
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="left",
-            x=0
-        ),
+        xaxis=dict(title="Years", gridcolor="#2d3150", color="white"),
+        yaxis=dict(title="Total Savings ($)", gridcolor="#2d3150", tickformat="$,.0f", color="white"),
+        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="white"), orientation="h", yanchor="bottom", y=1.02),
         margin=dict(t=60, b=40, l=60, r=20),
         hovermode="x unified"
     )
@@ -306,16 +279,12 @@ with st.sidebar:
         st.caption("Your profile fills in as we chat!")
 
     st.divider()
-    st.caption("🔒 Runs 100% on your device")
+    st.caption("🔒 Your data never leaves this session")
 
-    # PDF Export
     if st.session_state.messages:
         st.divider()
         st.markdown("### 📄 Export")
-        pdf_buffer = generate_pdf(
-            st.session_state.user_profile,
-            st.session_state.messages
-        )
+        pdf_buffer = generate_pdf(st.session_state.user_profile, st.session_state.messages)
         st.download_button(
             label="⬇️ Download Financial Plan (PDF)",
             data=pdf_buffer,
@@ -377,18 +346,14 @@ if st.session_state.mode == "dashboard":
             </div>""", unsafe_allow_html=True)
 
         st.divider()
-
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### 🥧 Budget Breakdown")
-            fig_budget = create_budget_chart(income, expenses)
-            st.plotly_chart(fig_budget, use_container_width=True)
-
+            st.plotly_chart(create_budget_chart(income, expenses), use_container_width=True)
         with col2:
             st.markdown("### 📈 10-Year Savings Projection")
             if savings > 0:
-                fig_proj = create_projection_chart(savings)
-                st.plotly_chart(fig_proj, use_container_width=True)
+                st.plotly_chart(create_projection_chart(savings), use_container_width=True)
             else:
                 st.warning("Your expenses exceed your income. Focus on reducing expenses first.")
 
@@ -398,9 +363,8 @@ if st.session_state.mode == "dashboard":
             col1, col2, col3 = st.columns(3)
             months = 120
             with col1:
-                total = savings * months
                 st.markdown(f"""<div class='metric-card'>
-                    <div class='metric-value'>${int(total):,}</div>
+                    <div class='metric-value'>${int(savings * months):,}</div>
                     <div class='metric-label'>No Investment (0%)</div>
                 </div>""", unsafe_allow_html=True)
             with col2:
@@ -431,9 +395,9 @@ elif st.session_state.mode == "markets":
 # ============================================================
 elif st.session_state.mode == "compare":
     st.title("⚖️ Model Comparison")
-    st.caption("See how your fine-tuned FinanceAI compares to base Phi3 Mini on the same question")
+    st.caption("See how different AI models answer the same financial question")
     st.divider()
-    st.markdown("Type any financial question below and both models answer simultaneously. This shows the direct impact of fine-tuning.")
+    st.markdown("Type any financial question below and two different models answer simultaneously.")
     st.divider()
 
     compare_question = st.text_area(
@@ -447,28 +411,28 @@ elif st.session_state.mode == "compare":
             st.divider()
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("### 🟢 FinanceAI (Fine-tuned)")
-                st.caption("Trained on 1,005 financial examples with CoT prompting")
-                with st.spinner("FinanceAI thinking..."):
-                    financeai_response = get_model_response("financeai", compare_question)
-                st.markdown(f"<div class='comparison-left'>{financeai_response}</div>", unsafe_allow_html=True)
+                st.markdown("### 🟢 Mixtral 8x7B")
+                st.caption("Mixtral — powerful mixture of experts model")
+                with st.spinner("Mixtral thinking..."):
+                    r1 = get_groq_response(compare_question, model="mixtral-8x7b-32768")
+                st.markdown(f"<div class='comparison-left'>{r1}</div>", unsafe_allow_html=True)
             with col2:
-                st.markdown("### 🟠 Phi3 Mini (Base Model)")
-                st.caption("Standard Phi3 Mini with no financial fine-tuning")
-                with st.spinner("Phi3 Mini thinking..."):
-                    phi3_response = get_model_response("phi3:mini", compare_question)
-                st.markdown(f"<div class='comparison-right'>{phi3_response}</div>", unsafe_allow_html=True)
+                st.markdown("### 🟠 LLaMA 3 8B")
+                st.caption("LLaMA 3 — Meta's latest open source model")
+                with st.spinner("LLaMA thinking..."):
+                    r2 = get_groq_response(compare_question, model="llama3-8b-8192")
+                st.markdown(f"<div class='comparison-right'>{r2}</div>", unsafe_allow_html=True)
             st.divider()
             st.markdown("### 📊 What to Notice")
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.markdown("**🎯 Specificity**\nDoes FinanceAI give more specific numbers?")
+                st.markdown("**🎯 Specificity**\nMore specific numbers?")
             with col2:
-                st.markdown("**📋 Structure**\nIs the response better organised?")
+                st.markdown("**📋 Structure**\nBetter organised?")
             with col3:
-                st.markdown("**💬 Tone**\nIs FinanceAI warmer and more advisor-like?")
+                st.markdown("**💬 Tone**\nWarmer and friendlier?")
             with col4:
-                st.markdown("**✅ Actions**\nDoes FinanceAI give clearer next steps?")
+                st.markdown("**✅ Actions**\nClearer next steps?")
         else:
             st.warning("Please enter a question first!")
 
@@ -477,7 +441,7 @@ elif st.session_state.mode == "compare":
 # ============================================================
 else:
     st.title("💰 FinanceAI")
-    st.caption("Your personal AI financial advisor — powered by a model trained on 1,005 financial examples")
+    st.caption("Your personal AI financial advisor — powered by Mixtral AI")
     st.divider()
 
     if not st.session_state.started:
@@ -501,11 +465,11 @@ else:
         st.divider()
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown("🔒 **100% Private** — runs on your device")
+            st.markdown("🔒 **100% Private** — session only")
         with col2:
-            st.markdown("🧠 **1,005 examples** — trained on real financial data")
+            st.markdown("⚡ **Blazing fast** — powered by Groq")
         with col3:
-            st.markdown("🇦🇺 **Australian focused** — super, tax, grants included")
+            st.markdown("🇦🇺 **Australian focused** — super, tax, grants")
         st.divider()
 
         if st.button("🚀 Start My Financial Plan", type="primary", use_container_width=True):
@@ -538,7 +502,7 @@ else:
                     <div class='metric-value' style='color:{color}'>{savings_rate:.1f}%</div>
                     <div class='metric-label'>Savings Rate</div>
                 </div>""", unsafe_allow_html=True)
-            st.caption("👆 Switch to **📊 Dashboard** in the sidebar to see full charts and projections")
+            st.caption("👆 Switch to **📊 Dashboard** in the sidebar for full charts")
             st.divider()
 
         for msg in st.session_state.messages:
@@ -551,20 +515,24 @@ else:
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            ollama_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + [
+            groq_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + [
                 {"role": m["role"], "content": m["content"]}
                 for m in st.session_state.messages
             ]
 
+            client = get_groq_client()
             with st.chat_message("assistant"):
                 reply_placeholder = st.empty()
                 full_reply = ""
-                for chunk in ollama.chat(
-                    model="financeai",
-                    messages=ollama_messages,
-                    stream=True
-                ):
-                    token = chunk["message"]["content"]
+                stream = client.chat.completions.create(
+                    model="mixtral-8x7b-32768",
+                    messages=groq_messages,
+                    max_tokens=1024,
+                    temperature=0.5,
+                    stream=True,
+                )
+                for chunk in stream:
+                    token = chunk.choices[0].delta.content or ""
                     full_reply += token
                     reply_placeholder.markdown(full_reply + "▌")
                 reply_placeholder.markdown(full_reply)
