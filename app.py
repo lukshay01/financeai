@@ -6,7 +6,7 @@ from groq import Groq
 from pdf_export import generate_pdf
 from stocks_news import render_stocks_page
 
-st.set_page_config(page_title=“FinanceAI”, page_icon=“💰”, layout=“wide”)
+st.set_page_config(page_title="FinanceAI", page_icon="💰", layout="wide")
 
 st.markdown(”””
 <style>
