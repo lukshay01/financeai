@@ -168,7 +168,7 @@ def extract_profile_info(message, profile):
         profile["Financial Goals"] = ", ".join(goals)
     return profile
 
-def get_groq_response(question, model="mixtral-8x7b-32768"):
+def get_groq_response(question, model="llama3-70b-8192"):
     client = get_groq_client()
     simple_prompt = f"You are a financial advisor. Answer this question with specific advice and numbers: {question}"
     response = client.chat.completions.create(
@@ -414,7 +414,7 @@ elif st.session_state.mode == "compare":
                 st.markdown("### 🟢 Mixtral 8x7B")
                 st.caption("Mixtral — powerful mixture of experts model")
                 with st.spinner("Mixtral thinking..."):
-                    r1 = get_groq_response(compare_question, model="mixtral-8x7b-32768")
+                    r1 = get_groq_response(compare_question, model="llama3-70b-8192")
                 st.markdown(f"<div class='comparison-left'>{r1}</div>", unsafe_allow_html=True)
             with col2:
                 st.markdown("### 🟠 LLaMA 3 8B")
@@ -525,7 +525,7 @@ else:
                 reply_placeholder = st.empty()
                 full_reply = ""
                 stream = client.chat.completions.create(
-                    model="mixtral-8x7b-32768",
+                    model="llama3-70b-8192",
                     messages=groq_messages,
                     max_tokens=1024,
                     temperature=0.5,
